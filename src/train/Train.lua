@@ -38,7 +38,7 @@ function nn.StochasticGradient:trainManual(trainData, valData, cnnfile, logFile)
         end
     end
     local preTrAcc = preTrCorrect / trainData:size()
-   
+
     local preValCorrect = 0
     for t = 1,valData:size() do
         local example = valData[t]

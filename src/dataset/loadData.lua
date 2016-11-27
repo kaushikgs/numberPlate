@@ -75,6 +75,9 @@ function loadData(dir)
     return data
 end
 
+--usage: th loadData.lua <dataset>
+
+
 -- classes: GLOBAL var!
 classes = {'numberPlate','background'}
 

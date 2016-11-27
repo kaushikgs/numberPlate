@@ -94,6 +94,7 @@ void Classifier::SetMean(const string& mean_file) {
     //Scalar channel_std_rgb(stdDbl[0], stdDbl[1], stdDbl[2]);
     mean_ = Mat(input_geometry_, CV_32FC3, channel_mean_rgb);
     //std_ = Mat(input_geometry_, CV_32FC3, channel_std_rgb);
+    meanFile.close();
 }
 
 vector<float> Classifier::Predict(const Mat& img) {
@@ -169,7 +170,7 @@ void Classifier::Preprocess(const Mat& img,
     /* This operation will write the separate BGR planes directly to the
      * input layer of the network because it is wrapped by the Mat
      * objects in input_channels. */
-    split(sample_normalized, *input_channels);
+    split(sample_subtracted, *input_channels);
 
     CHECK(reinterpret_cast<float*>(input_channels->at(0).data)
         == net_->input_blobs()[0]->cpu_data())
@@ -258,8 +259,13 @@ int main(int argc, char** argv) {
         else
             imagePath = negDirPath + imageName;
         
-        Mat img = imread(imagePath, -1);
+        Mat img_bgr = cv::imread(imagePath, -1);
+        Mat img_rgb;
+        cvtColor(img_bgr, img_rgb, CV_BGR2RGB);
+        Mat img;
+        img_rgb.convertTo(img, 21, 1.0/255);
         CHECK(!img.empty()) << "Unable to decode image " << imagePath;
+        
         bool numPlate = classifier.Classify(img);
         if (numPlate){
             if (labels[i] == true){
