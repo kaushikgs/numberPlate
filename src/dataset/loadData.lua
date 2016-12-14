@@ -86,8 +86,8 @@ if #arg == 0 then
 end
 datName = ''
 
-imwidth = 150
-imheight = 150
+imwidth = 300
+imheight = 100
 
 local datasetDir = arg[1]
 pathParts = split_path(datasetDir)

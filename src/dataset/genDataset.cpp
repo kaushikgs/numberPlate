@@ -214,23 +214,25 @@ Rect getTLWH(string dataFilePath){
     return Rect(tlx, tly, width, height);
 }
 
-bool subimage(Rect tlwh, Rect corn){
-    tlwh.x += tlwh.width/4;    //modification to decrease false negatives, positives are easy to filter
-    tlwh.y += tlwh.height/4;
-    tlwh.width = (tlwh.width)/2;
-    tlwh.height = (tlwh.height)/2;
+bool subimage(Rect tlwh, RotatedRect corn){
+    // tlwh.x += tlwh.width/4;    //modification to decrease false negatives, positives are easy to filter
+    // tlwh.y += tlwh.height/4;
+    // tlwh.width = (tlwh.width)/2;
+    // tlwh.height = (tlwh.height)/2;
 
-    if((tlwh & corn) != tlwh) return false;
+    Rect bound = corn.boundingRect();
+    if((tlwh & bound) != tlwh) return false;
 
     //if(7*4*tlwh.width*tlwh.height < cornWidth*cornHeight)
     //    return false;
-    if (3*2*tlwh.width < corn.width || 3*2*tlwh.height < corn.height)
+    if (3*2*tlwh.width < bound.width || 3*2*tlwh.height < bound.height)
         return false;
 
     return true;
 }
 
-bool intersecting(Rect rect1, Rect rect2){
+bool intersecting(Rect rect1, RotatedRect rotRect2){
+    Rect rect2 = rotRect2.boundingRect();
     return (rect1 & rect2).area() > 0;
 }
 
@@ -255,29 +257,10 @@ Mat extractYellowChannel(Mat &inputImage){
     return yellowImage;
 }
 
-Mat eqHistogram(const Mat &input){
-    blur( input, input, Size( 3, 3 ));
-    Mat output;
-    cvtColor(input,output,CV_BGR2YCrCb);
-    vector<Mat> channels;
-
-    split(output,channels);
-    equalizeHist(channels[0], channels[0]);
-    merge(channels,output);
-    cvtColor(output,output,CV_YCrCb2BGR);
-    return output;
-}
-
 Mat processMat(Mat &input){
-    Mat equalized, padded, square;
-  //equalized = eqHistogram(input);
-    equalized = input;
-    int border = 5;
-    copyMakeBorder(equalized, padded, border, border, border, border, BORDER_CONSTANT, Scalar(0,0,0));
-    square = getSquareImage(padded,150);
-    if (square.cols != 150 || square.rows != 150)
-        cerr << "output dimension is " << square.rows << " x " <<  square.cols << endl;
-    return square;
+    Mat output;
+    resize(input, output, Size(300,100));
+    return output;
 }
 
 void augment(Mat &inputImage, Rect cornerPoints, vector<Mat> &augmented){
@@ -386,6 +369,60 @@ void MSERGenerator_t::genMSERImages(string datasetPath, string annotationPath, b
     genMSERImages(datasetPath, valImageFiles, annotationPath, valDir, takePos, takeNeg);
 }
 
+void filterMSERs(vector<ellipseParameters> &MSERElls, vector<ellipseParameters> &MSEREllsYlw, vector<ellipseParameters> &filteredElls){
+    for(ellipseParameters tempEll : MSERElls){
+        float ellArea = PI * tempEll.axes.width * tempEll.axes.height;
+        if(ellArea > 200 && (tempEll.angle < 25 || tempEll.angle > 155 ) && tempEll.axes.height > 0 && (float)tempEll.axes.width/(float)tempEll.axes.height > 1.5 && (float)tempEll.axes.width/(float)tempEll.axes.height < 10 ) //Potential Number Plates
+        {
+            filteredElls.push_back(tempEll);
+        }
+    }
+    for(ellipseParameters tempEll : MSEREllsYlw){
+        float ellArea = PI * tempEll.axes.width * tempEll.axes.height;
+        if(ellArea > 200 && (tempEll.angle < 25 || tempEll.angle > 155 ) && tempEll.axes.height > 0 && (float)tempEll.axes.width/(float)tempEll.axes.height > 1.5 && (float)tempEll.axes.width/(float)tempEll.axes.height < 10 ) //Potential Number Plates
+        {
+            filteredElls.push_back(tempEll);
+        }
+    }
+}
+
+void convEllToRect(Mat &inputImage, vector<ellipseParameters> &MSEREllipses, vector<RotatedRect> &MSERRects){
+    Rect rect(Point(), inputImage.size());
+    bool isValid;
+
+    for (ellipseParameters ell : MSEREllipses){
+        isValid = true;
+        RotatedRect MSERRect(ell.center, Size(ell.axes.width*4, ell.axes.height*4), ell.angle); //ell.axes contains half the length of axes
+        Point2f corners[4];
+        MSERRect.points(corners);
+        for(int i=0; i<4; i++){
+            if (! rect.contains(corners[i])){
+                isValid = false;
+                break;
+            }
+        }
+        if(isValid){
+            MSERRects.push_back(MSERRect);
+        }
+    }
+}
+
+Mat cropRegion(Mat image, RotatedRect rect){
+    Mat M, rotated, cropped;
+    float angle = rect.angle;
+    Size rect_size = rect.size;
+
+    if(rect.angle < -45.){
+        angle += 90.0;
+        swap(rect_size.width, rect_size.height);
+    }
+
+    M = getRotationMatrix2D(rect.center, angle, 1.0);
+    warpAffine(image, rotated, M, image.size(), INTER_CUBIC);
+    getRectSubPix(rotated, rect_size, rect.center, cropped);
+    return cropped;
+}
+
 void MSERGenerator_t::genMSERImages(string datasetPath, vector<string> imageFiles, string annotationPath, string outputPath, bool takePos, bool takeNeg){
     string posDir = outputPath + "positive/";
     string negDir = outputPath + "negative/";
@@ -395,43 +432,34 @@ void MSERGenerator_t::genMSERImages(string datasetPath, vector<string> imageFile
         imageName.erase(imageName.end() - 4, imageName.end());
         Mat inputImage = imread(datasetPath + imageFile);
 
-        vector<ellipseParameters> MSERElls;
-        vector<Rect> MSERRects;
-        computeMSER(inputImage, MSERElls, MSERRects);
+        vector<ellipseParameters> MSERElls, MSEREllsYlw, filteredElls;
+        computeMSER(inputImage, MSERElls);
+        Mat yellowChannel = extractYellowChannel(inputImage);
+        computeMSER(yellowChannel, MSEREllsYlw);
+        filterMSERs(MSERElls, MSEREllsYlw, filteredElls);
         
-        Mat yellowChannel=extractYellowChannel(inputImage);
-        vector<ellipseParameters> MSEREllsYlw;
-        vector<Rect> MSERRectsYlw;
-        computeMSER(yellowChannel, MSEREllsYlw, MSERRectsYlw);
-        
-        MSERElls.insert(MSERElls.end(), MSEREllsYlw.begin(), MSEREllsYlw.end());
-        MSERRects.insert(MSERRects.end(), MSERRectsYlw.begin(), MSERRectsYlw.end());
-
+        vector<RotatedRect> MSERRects;
+        convEllToRect(inputImage, filteredElls, MSERRects);
         Rect tlwh = getTLWH(annotationPath + imageFile + ".txt");
         
-        for(unsigned int j=0; j<MSERElls.size(); j++){
-            ellipseParameters tempEll = MSERElls[j];
-            float ellArea = PI * tempEll.axes.width * tempEll.axes.height;
-            if(ellArea > 200 && (tempEll.angle < 25 || tempEll.angle > 155 ) && tempEll.axes.height > 0 && (float)tempEll.axes.width/(float)tempEll.axes.height > 1.5 && (float)tempEll.axes.width/(float)tempEll.axes.height < 10 )//Number Plates
-            {
-                if(takePos && subimage(tlwh, MSERRects[j])){
-                    Mat roi(inputImage, MSERRects[j]);
-                    Mat mser = processMat(roi);
-                    addPositive(mser, imageName, posDir);
-                    
-                    vector<Mat> augmented;
-                    augment(inputImage, MSERRects[j], augmented);
-                    for(int a=0; a<augmented.size(); a++){
-                        Mat mser2 = processMat(augmented[a]);
-                        addPositive(mser2, imageName, posDir);
-                    }
-                }
+        for(RotatedRect MSERRect : MSERRects){
+            if(takePos && subimage(tlwh, MSERRect)){
+                Mat roi = cropRegion(inputImage, MSERRect);
+                Mat mser = processMat(roi);
+                addPositive(mser, imageName, posDir);
                 
-                else if (takeNeg && !intersecting(tlwh, MSERRects[j])){
-                    Mat roi(inputImage, MSERRects[j]);
-                    Mat mser = processMat(roi);
-                    addNegative(mser, imageName, negDir);
-                }
+                // vector<Mat> augmented;
+                // augment(inputImage, MSERRect, augmented);
+                // for(int a=0; a<augmented.size(); a++){
+                //     Mat mser2 = processMat(augmented[a]);
+                //     addPositive(mser2, imageName, posDir);
+                // }
+            }
+            
+            else if (takeNeg && !intersecting(tlwh, MSERRect)){
+                Mat roi = cropRegion(inputImage, MSERRect);
+                Mat mser = processMat(roi);
+                addNegative(mser, imageName, negDir);
             }
         }
     }
@@ -529,7 +557,7 @@ int main(int argc, char **argv){
         string dirName = strs[strs.size()-1];
         datasetName = datasetName + dirName + "_";
     }
-    datasetName = datasetName + "an_" + argv[1] + "k_" + argv[2];
+    datasetName = datasetName + "anrr_" + argv[1] + "k_" + argv[2];
     string outputPath = projectRoot + "datasets/" + datasetName + "/";
     mkAllDirs(outputPath);
     

@@ -7,8 +7,8 @@ if opt.type == 'cuda' then
 end
 
 local InputMaps = 3
-local InputWidth = 150  --changed
-local InputHeight = 150 --changed
+local InputWidth = 300  --changed
+local InputHeight = 100 --changed
 
 local KernelSize = {7,7,3,3,3,3,1,1,1,1}
 local ConvStride = {2,1,1,1,1,1,1,1,1,1}
@@ -24,9 +24,13 @@ local FeatMaps = {InputMaps, 96,256,512,512,1024,1024,4096, 64, Outputs} --chang
 local LayerNum
 
 --------------Calculate size of feature maps - useful for linear layer flattening------------------------
-SizeMap = {InputWidth}
+SizeMapWidth = {InputWidth}
 for i=2, #FeatMaps do
-    SizeMap[i] = math.floor(math.ceil((SizeMap[i-1] - KernelSize[i-1] + 1 + 2*Padding[i-1]) / ConvStride[i-1]) / PoolStride[i-1])
+    SizeMapWidth[i] = math.floor(math.ceil((SizeMapWidth[i-1] - KernelSize[i-1] + 1 + 2*Padding[i-1]) / ConvStride[i-1]) / PoolStride[i-1])
+end
+SizeMapHeight = {InputHeight}
+for i=2, #FeatMaps do
+    SizeMapHeight[i] = math.floor(math.ceil((SizeMapHeight[i-1] - KernelSize[i-1] + 1 + 2*Padding[i-1]) / ConvStride[i-1]) / PoolStride[i-1])
 end
 
 ----------------Create Model-------------------------------------
@@ -75,8 +79,8 @@ model:add(nn.SpatialMaxPooling(PoolSize[LayerNum], PoolSize[LayerNum], PoolStrid
 
 ---------------Layer - Fully connected ------------------
 LayerNum = 7
-model:add(nn.Reshape(SizeMap[LayerNum]*SizeMap[LayerNum]*FeatMaps[LayerNum]))
-model:add(nn.Linear(SizeMap[LayerNum]*SizeMap[LayerNum]*FeatMaps[LayerNum],  FeatMaps[LayerNum+1]))
+model:add(nn.Reshape(SizeMapWidth[LayerNum]*SizeMapHeight[LayerNum]*FeatMaps[LayerNum]))
+model:add(nn.Linear(SizeMapWidth[LayerNum]*SizeMapHeight[LayerNum]*FeatMaps[LayerNum],  FeatMaps[LayerNum+1]))
 model:add(nn.ReLU())
 model:add(nn.Dropout(0.5))
 ---------------Layer - Fully connected ------------------

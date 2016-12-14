@@ -3,7 +3,7 @@
 using namespace cv;
 
 //add MSER ellipses and rectangles to MSEREllipses and MSERRects
-void computeMSER(Mat &inputImage, vector<ellipseParameters> &MSEREllipses, vector<Rect> &MSERRects){
+void computeMSER(Mat &inputImage, vector<ellipseParameters> &MSEREllipses){
 
     extrema::ExtremaParams p;
     p.preprocess = 0;
@@ -32,7 +32,7 @@ void computeMSER(Mat &inputImage, vector<ellipseParameters> &MSEREllipses, vecto
     result = extrema::getRLEExtrema(p, im);
     
     //result.MSERmin.insert(result.MSERmin.end(), result.MSERplus.begin(), result.MSERplus.end());
-    convRleToRect(result.MSERmin, MSERRects, im.width, im.height);
+    //convRleToRect(result.MSERmin, MSERRects, im.width, im.height);
     extrema::convRleToEll(result.MSERmin, MSEREllipses, scale_factor);
     return;
 }
