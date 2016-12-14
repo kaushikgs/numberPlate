@@ -29,6 +29,70 @@
 using namespace std;
 using namespace cv;
 
+class MSERGenerator_t{
+    int numPoss=0, numTrNegs=0, numVlNegs=0;
+    int maxTrNumNegs, maxVlNumNegs;
+    float train2valRatio;
+    vector<Mat> negTrMats, negVlMats;
+    vector<string> negTrMatPaths, negVlMatPaths;
+    
+    string outputPath; //the output path
+    string trainDir;
+    string valDir;
+
+public:
+    MSERGenerator_t(int maxNumNegs, float train2valRatio, string outputPath){
+        this->maxTrNumNegs = train2valRatio * maxNumNegs;
+        this->maxVlNumNegs = maxNumNegs - maxTrNumNegs;
+        this->train2valRatio = train2valRatio;
+        this->outputPath = outputPath;
+        trainDir = outputPath + "train/";
+        valDir = outputPath + "val/";
+        negTrMats.reserve(maxTrNumNegs);
+        negTrMatPaths.reserve(maxTrNumNegs);
+        negVlMats.reserve(maxVlNumNegs);
+        negVlMatPaths.reserve(maxVlNumNegs);
+    }
+
+    void gen(string datasetPath);
+    void genInsti(string instiDir);
+    void writeNegs();
+
+private:
+    void addPositive(Mat mser, string imageName, string posDir);
+    void addNegative(Mat mser, string imageName, string negDir);
+    void genMSERImages(string datasetPath, string annotationPath, bool takePos, bool takeNeg);
+    void genMSERImages(string datasetPath, vector<string> imageFiles, string annotationPath, string outputPath, bool takePos, bool takeNeg);
+    void genInstiMSERs(string datasetPath, vector<string> imageFiles, string annotationPath, string outputPath);
+    void processAnnotation(string dataFilePath, string imageName, string posDir, string negDir, Mat &inputImage);
+};
+
+void mkAllDirs(string outputPath){
+    boost::filesystem::remove_all(outputPath);
+    mkdir(outputPath.c_str(), 0777);
+    usleep(2000000);
+    string trainPath = outputPath + "train/";
+    mkdir(trainPath.c_str(), 0777);
+    usleep(2000000);
+    string valPath = outputPath + "val/";
+    mkdir(valPath.c_str(), 0777);
+    usleep(2000000);
+    mkdir((trainPath + "positive/").c_str(), 0777);
+    usleep(2000000);
+    mkdir((trainPath + "negative/").c_str(), 0777);
+    usleep(2000000);
+    mkdir((valPath + "positive/").c_str(), 0777);
+    usleep(2000000);
+    mkdir((valPath + "negative/").c_str(), 0777);
+    usleep(2000000);
+}
+
+bool exists(string path){
+    struct stat info;
+    stat( path.c_str(), &info);
+    return S_ISDIR(info.st_mode);
+}
+
 Mat getSquareImage( const cv::Mat& img, int target_width = 150 )
 {
     int width = img.cols,
@@ -68,30 +132,54 @@ void splitPath(string path, vector<string> &split){
     }
 }
 
-vector<string> readImageNamesFromDirectory(string dirPath) {
+int countFiles(string directory){
     DIR *dir;
     struct dirent *ent;
-    vector<string> imagePaths;
+    dir = opendir(directory.c_str());
+    if(dir == NULL){
+        cout << "Could not open Directory " << directory <<endl;
+        return -1;
+    }
+    int count = 0;
+
+    while((ent = readdir(dir)) != NULL){
+        if(ent->d_type == DT_REG)   //ignore subdirectories, datas will be there
+            count++;
+        string fileName = ent->d_name;
+        if(strcmp(fileName.c_str(), ".") == 0 || strcmp(fileName.c_str(), "..") == 0 ){
+            count--;
+        }
+    }
+
+    return count;
+}
+
+vector<string> listDirectory(string dirPath, bool returnPaths) {
+    DIR *dir;
+    struct dirent *ent;
+    vector<string> result;
     
-    const char *dirPathChar = dirPath.c_str();
-    
-    dir = opendir(dirPathChar);
+    dir = opendir(dirPath.c_str());
     if(dir == NULL){
         cout<<"Could not open Directory "<<dirPath<<endl;
-        return imagePaths;
+        return result;
     }
 
     while((ent = readdir(dir)) != NULL){
         if(ent->d_type == DT_DIR)   //ignore subdirectories, datas will be there
             continue;   //corners, mser, positive, negative may be there, these shouldm't be considered as images to process
-        string imageName = ent->d_name;
-        if(strcmp(imageName.c_str(), ".") != 0 && strcmp(imageName.c_str(), "..") != 0 ){
-            string imagePath = dirPath + imageName;
-            imagePaths.push_back(imagePath);
+        string fileName = ent->d_name;
+        if(strcmp(fileName.c_str(), ".") != 0 && strcmp(fileName.c_str(), "..") != 0 ){
+            if(returnPaths){
+                result.push_back(dirPath + fileName);
+            }
+            else{
+                result.push_back(fileName);
+            }
         }
     }
 
-    return imagePaths;
+    return result;
 }
 
 void splitDataset(vector<string> &allImagePaths, float train2valRatio, vector<string> &trainImagePaths, vector<string> &valImagePaths){
@@ -140,6 +228,10 @@ bool subimage(Rect tlwh, Rect corn){
         return false;
 
     return true;
+}
+
+bool intersecting(Rect rect1, Rect rect2){
+    return (rect1 & rect2).area() > 0;
 }
 
 Mat extractYellowChannel(Mat &inputImage){
@@ -223,85 +315,131 @@ void augment(Mat &inputImage, Rect cornerPoints, vector<Mat> &augmented){
     augmented.push_back(aug2);
 }
 
-void genMSERImages(vector<string> imagePaths, string outputPath){
-    int positive=0;
+void MSERGenerator_t::addPositive(Mat mser, string imageName, string posDir){
+    imwrite(posDir + imageName + "_" + to_string(numPoss) + ".jpg", mser);
+    numPoss++;
+}
+
+void MSERGenerator_t::addNegative(Mat mser, string imageName, string negDir){
+    int *numNegs, *maxNumNegs;
+    vector<Mat> *negMats;
+    vector<string> *negMatPaths;
+
+    if(negDir.find("train") != -1){
+        numNegs = &numTrNegs;
+        maxNumNegs = &maxTrNumNegs;
+        negMats = &negTrMats;
+        negMatPaths = &negTrMatPaths;
+    }
+    else{
+        numNegs = &numVlNegs;
+        maxNumNegs = &maxVlNumNegs;
+        negMats = &negVlMats;
+        negMatPaths = &negVlMatPaths;        
+    }
+
+    if (*numNegs < *maxNumNegs){
+        negMats->push_back(mser);
+        negMatPaths->push_back(negDir + imageName + "_" + to_string(*numNegs)+".jpg");
+    }
+    else {
+        double randn = (double)rand() / (double)RAND_MAX ;
+        double prob = ((double) *maxNumNegs) / (*numNegs+1);
+
+        if(randn < prob){
+            int randi = *maxNumNegs * ((double)rand() / ((double) RAND_MAX + 1));
+            (*negMats)[randi] = mser;
+            (*negMatPaths)[randi] = negDir + imageName + "_" + to_string(randi)+".jpg";
+        }
+    }
+    *numNegs = *numNegs + 1;
+}
+
+void MSERGenerator_t::writeNegs(){
+    for(int i=0; i<negTrMats.size(); i++){
+        imwrite(negTrMatPaths[i], negTrMats[i]);
+    }
+    for(int i=0; i<negVlMats.size(); i++){
+        imwrite(negVlMatPaths[i], negVlMats[i]);
+    }
+}
+
+void MSERGenerator_t::gen(string datasetPath){
+    string annotationPath = datasetPath + "datas/";
+    if (exists(datasetPath + "positive/")){
+        genMSERImages(datasetPath + "positive/", annotationPath, true, false);
+    }
+    if (exists(datasetPath + "negative/")){
+        genMSERImages(datasetPath + "negative/", annotationPath, false, true);
+    }
+    if (exists(datasetPath + "both/")){
+        genMSERImages(datasetPath + "both/", annotationPath, true, true);
+    }
+}
+
+void MSERGenerator_t::genMSERImages(string datasetPath, string annotationPath, bool takePos, bool takeNeg){
+    vector<string> allImageFiles = listDirectory(datasetPath, false);
+    vector<string> trainImageFiles, valImageFiles;
+    splitDataset(allImageFiles, train2valRatio, trainImageFiles, valImageFiles);
+
+    genMSERImages(datasetPath, trainImageFiles, annotationPath, trainDir, takePos, takeNeg);
+    genMSERImages(datasetPath, valImageFiles, annotationPath, valDir, takePos, takeNeg);
+}
+
+void MSERGenerator_t::genMSERImages(string datasetPath, vector<string> imageFiles, string annotationPath, string outputPath, bool takePos, bool takeNeg){
     string posDir = outputPath + "positive/";
-    mkdir(posDir.c_str(), 0777);
-    usleep(2000000);
     string negDir = outputPath + "negative/";
-    mkdir(negDir.c_str(), 0777);
-    usleep(2000000);
 
-    static double total_time = 0;
-    clock_t begin_t = clock();
-    for(unsigned int i=0; i<imagePaths.size(); i++){
-        string imagePath = imagePaths[i];
-        int pos = imagePath.find_last_of("/");
-        string imageName = imagePath.substr(pos + 1);
+    for(string imageFile : imageFiles){
+        string imageName = imageFile;
         imageName.erase(imageName.end() - 4, imageName.end());
-        string imageDir = imagePath.substr(0,pos+1);
+        Mat inputImage = imread(datasetPath + imageFile);
 
-        Mat inputImage = imread(imagePath);
-        Mat drawEllImage = inputImage.clone();
-
-        vector<Mat> croppedMSER;
         vector<ellipseParameters> MSERElls;
         vector<Rect> MSERRects;
-        computeMSER(inputImage, MSERElls, MSERRects, croppedMSER);
+        computeMSER(inputImage, MSERElls, MSERRects);
         
         Mat yellowChannel=extractYellowChannel(inputImage);
-        vector<Mat> croppedMSERYlw;
         vector<ellipseParameters> MSEREllsYlw;
         vector<Rect> MSERRectsYlw;
         computeMSER(yellowChannel, MSEREllsYlw, MSERRectsYlw);
-        cropMSERs(inputImage, MSERRectsYlw, croppedMSERYlw);    //get region from original image
         
-        croppedMSER.insert(croppedMSER.end(), croppedMSERYlw.begin(), croppedMSERYlw.end());
         MSERElls.insert(MSERElls.end(), MSEREllsYlw.begin(), MSEREllsYlw.end());
         MSERRects.insert(MSERRects.end(), MSERRectsYlw.begin(), MSERRectsYlw.end());
 
-        Rect tlwh = getTLWH(imageDir + "datas/" + imageName + ".jpg.txt");
-        //srand(123456);
-        int countMSERs = 0;
+        Rect tlwh = getTLWH(annotationPath + imageFile + ".txt");
         
         for(unsigned int j=0; j<MSERElls.size(); j++){
             ellipseParameters tempEll = MSERElls[j];
             float ellArea = PI * tempEll.axes.width * tempEll.axes.height;
             if(ellArea > 200 && (tempEll.angle < 25 || tempEll.angle > 155 ) && tempEll.axes.height > 0 && (float)tempEll.axes.width/(float)tempEll.axes.height > 1.5 && (float)tempEll.axes.width/(float)tempEll.axes.height < 10 )//Number Plates
             {
-                ellipse(drawEllImage, tempEll.center, tempEll.axes, tempEll.angle, 0, 360, Scalar(rand()%255,rand()%255,rand()%255));
-                string croppedMSERImageName = imageName + "_" + to_string(countMSERs) + ".jpg";
-                string croppedMSERImagePath;
-                
-                Mat paddedcroppedMSER = processMat(croppedMSER[j]);
-
-                if(subimage(tlwh, MSERRects[j])){
-                    croppedMSERImageName = imageName + "_" + to_string(positive)+".jpg";
-                    croppedMSERImagePath = posDir + croppedMSERImageName;
+                if(takePos && subimage(tlwh, MSERRects[j])){
+                    Mat roi(inputImage, MSERRects[j]);
+                    Mat mser = processMat(roi);
+                    addPositive(mser, imageName, posDir);
+                    
                     vector<Mat> augmented;
                     augment(inputImage, MSERRects[j], augmented);
                     for(int a=0; a<augmented.size(); a++){
-                        string croppedMSERImageName2 = imageName + "_" + to_string(positive)+"_"+to_string(a)+".jpg";
-                        string croppedMSERImagePath2 = posDir + croppedMSERImageName2;
-                        Mat paddedcroppedMSER2 = processMat(augmented[a]);
-                        imwrite(croppedMSERImagePath2, paddedcroppedMSER2);
+                        Mat mser2 = processMat(augmented[a]);
+                        addPositive(mser2, imageName, posDir);
                     }
-                    imwrite(croppedMSERImagePath, paddedcroppedMSER);
-                    positive++;
                 }
                 
-                countMSERs++;
+                else if (takeNeg && !intersecting(tlwh, MSERRects[j])){
+                    Mat roi(inputImage, MSERRects[j]);
+                    Mat mser = processMat(roi);
+                    addNegative(mser, imageName, negDir);
+                }
             }
         }
     }
-    clock_t end_t = clock();
-    total_time += double(end_t - begin_t) / CLOCKS_PER_SEC;
-    cout << "genMSERImages : " << total_time << "s" << endl;
+
     return;
 }
 
-void processAnnotation(string dataFilePath, string imageName, string posDir, string negDir, Mat &inputImage, int &count,
-    int &numNegs, int &maxNumNegs, vector<Mat> &negMats, vector<string> &negMatNames){
+void MSERGenerator_t::processAnnotation(string dataFilePath, string imageName, string posDir, string negDir, Mat &inputImage){
     ifstream dataFile(dataFilePath.c_str());
     if(!dataFile.is_open()){
         return;
@@ -318,81 +456,55 @@ void processAnnotation(string dataFilePath, string imageName, string posDir, str
         per.y = max(per.y - per.height/2, 0);
         per.width = 2*per.width;
         per.height = 2*per.height;
-        
         if(per.x + per.width > inputImage.cols) per.width = inputImage.cols - per.x;
         if(per.y + per.height > inputImage.rows) per.height = inputImage.rows - per.y;
-        
-        Rect r(per.x, per.y, per.width, per.height);
-        Mat roi(inputImage,r);
-        
-        string croppedImagePath;
-        string croppedImageName = imageName+"_"+to_string(count)+".jpg";
 
         if(label=='n'){
-            croppedImagePath = posDir + croppedImageName;
+            Mat roi(inputImage, per);
+            Mat mser = processMat(roi);
+            addPositive(mser, imageName, posDir);
+            
             vector<Mat> augmented;
             augment(inputImage, per, augmented);
             for(int a=0; a<augmented.size(); a++){
-                string croppedMSERImageName2 = imageName + "_" + to_string(count)+"_"+to_string(a)+".jpg";
-                string croppedMSERImagePath2 = posDir + croppedMSERImageName2;
-                Mat paddedcroppedMSER2 = processMat(augmented[a]);
-                imwrite(croppedMSERImagePath2, paddedcroppedMSER2);
+                Mat mser2 = processMat(augmented[a]);
+                addPositive(mser2, imageName, posDir);
             }
-            Mat paddedcroppedMSER = processMat(roi);
-            imwrite(croppedImagePath, paddedcroppedMSER);
         }
         
         else if (label=='b') {
-            if (numNegs < maxNumNegs){
-                negMats.push_back(processMat(roi));
-                negMatNames.push_back(croppedImageName);
-                numNegs++;
-            }
-            else {
-                double randn = (double)rand() / (double)RAND_MAX ;
-                double prob = ((double) maxNumNegs) / (numNegs+1);
-
-                if(randn < prob){
-                    int randi = maxNumNegs * ((double)rand() / ((double) RAND_MAX + 1));
-                    negMats[randi] = processMat(roi);
-                    negMatNames[randi] = croppedImageName;
-                }
-            }
+            Mat roi(inputImage, per);
+            Mat mser = processMat(roi);
+            addNegative(mser, imageName, negDir);
         }
-        
-        else{
-            continue;
-        }
-        
-        count++;
     }
+
     dataFile.close();
 }
 
-void genInstiMSERs(vector<string> imagePaths, string instiDir, int maxNumNegs, string outputPath){
-    int numNegs = 0;
-    vector<Mat> negMats;
-    negMats.reserve(maxNumNegs);
-    vector<string> negMatNames;
-    negMatNames.reserve(maxNumNegs);
+void MSERGenerator_t::genInsti(string datasetPath){
+    string annotationPath = datasetPath + "annotation/";
+    vector<string> allImageFiles = listDirectory(datasetPath, false);
+    vector<string> trainImageFiles, valImageFiles;
+    splitDataset(allImageFiles, train2valRatio, trainImageFiles, valImageFiles);
+
+    genInstiMSERs(datasetPath, trainImageFiles, annotationPath, trainDir);
+    genInstiMSERs(datasetPath, valImageFiles, annotationPath, valDir);
+}
+
+void MSERGenerator_t::genInstiMSERs(string datasetPath, vector<string> imageFiles, string annotationPath, string outputPath){
     string posDir = outputPath + "positive/";
     string negDir = outputPath + "negative/";
     
-    for(string imagePath : imagePaths){
-        int pos = imagePath.find_last_of("/");
-        string imageName = imagePath.substr(pos + 1);
+    for(string imageFile : imageFiles){
+        string imageName = imageFile;
         imageName.erase(imageName.end() - 4, imageName.end());
-        Mat inputImage = imread(imagePath);
+        Mat inputImage = imread(datasetPath + imageFile);
         
-        int count = 0;
-        string dataFilePath=instiDir + "annotation/" + imageName + ".txt";
-        processAnnotation(dataFilePath, imageName, posDir, negDir, inputImage, count, numNegs, maxNumNegs, negMats, negMatNames);
-        dataFilePath=instiDir + "annotation/" + imageName + "_yellowChannel.txt";
-        processAnnotation(dataFilePath, imageName, posDir, negDir, inputImage, count, numNegs, maxNumNegs, negMats, negMatNames);
-    }
-    
-    for(int i=0; i<negMats.size(); i++){
-        imwrite(negDir + negMatNames[i], negMats[i]);
+        string dataFilePath = annotationPath + imageName + ".txt";
+        processAnnotation(dataFilePath, imageName, posDir, negDir, inputImage);
+        dataFilePath = annotationPath + imageName + "_yellowChannel.txt";
+        processAnnotation(dataFilePath, imageName, posDir, negDir, inputImage);
     }
 }
 
@@ -404,15 +516,10 @@ int main(int argc, char **argv){
     }
     string projectRoot = "../../";
     srand(0);
-    
     string datasetName = "";
-    
-    vector<string> allImagePaths;
-    vector<string> trainImagePaths;
-    vector<string> valImagePaths;
     string instiDir = "NULL";
 
-    int numNegs = strtol(argv[1], NULL, 10)*1000;
+    int maxNumNegs = strtol(argv[1], NULL, 10)*1000;
     float train2valRatio = strtof(argv[2], NULL);
 
     for(int i=3; i<argc; i++){
@@ -421,37 +528,23 @@ int main(int argc, char **argv){
         splitPath(imageDirPath, strs);
         string dirName = strs[strs.size()-1];
         datasetName = datasetName + dirName + "_";
-        if(dirName.find("insti") != -1){
-            instiDir = imageDirPath;
+    }
+    datasetName = datasetName + "an_" + argv[1] + "k_" + argv[2];
+    string outputPath = projectRoot + "datasets/" + datasetName + "/";
+    mkAllDirs(outputPath);
+    
+    MSERGenerator_t mserGenerator(maxNumNegs, train2valRatio, outputPath);
+    for(int i=3; i<argc; i++){
+        string imageDirPath = argv[i];
+        if(imageDirPath.find("insti") != -1){   //look for "insti" in the whole path
+            mserGenerator.genInsti(imageDirPath);
         }
         else{
-            allImagePaths = readImageNamesFromDirectory(imageDirPath);
-            splitDataset(allImagePaths, train2valRatio, trainImagePaths, valImagePaths);
+            mserGenerator.gen(imageDirPath);
         }
     }
-    datasetName = datasetName + argv[1] + "k_" + argv[2];
-    
-    string datasetPath = projectRoot + "datasets/" + datasetName + "/";
-    remove(datasetPath.c_str());
-    mkdir(datasetPath.c_str(), 0777);
-    usleep(2000000);
-    string trainPath = datasetPath + "train/";
-    mkdir(trainPath.c_str(), 0777);
-    usleep(2000000);
-    string valPath = datasetPath + "val/";
-    mkdir(valPath.c_str(), 0777);
-    usleep(2000000);
-    
-    genMSERImages(trainImagePaths, trainPath);
-    genMSERImages(valImagePaths, valPath);
-    
-    if(instiDir != "NULL"){
-        allImagePaths = readImageNamesFromDirectory(instiDir);
-        trainImagePaths.clear();
-        valImagePaths.clear();
-        splitDataset(allImagePaths, train2valRatio, trainImagePaths, valImagePaths);
-        genInstiMSERs(trainImagePaths, instiDir, train2valRatio*numNegs, trainPath);
-        genInstiMSERs(valImagePaths, instiDir, (1-train2valRatio)*numNegs, valPath);
-    }
+
+    mserGenerator.writeNegs();
+
     return 0;
 }

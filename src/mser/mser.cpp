@@ -37,19 +37,6 @@ void computeMSER(Mat &inputImage, vector<ellipseParameters> &MSEREllipses, vecto
     return;
 }
 
-void computeMSER(Mat &inputImage, vector<ellipseParameters> &MSEREllipses, vector<Rect> &MSERRects, vector<Mat> &MSERMats){
-    computeMSER(inputImage, MSEREllipses, MSERRects);
-    cropMSERs(inputImage, MSERRects, MSERMats);
-    return;
-}
-
-void cropMSERs(Mat &inputImage, vector<Rect> &MSERRects, vector<Mat> &MSERMats){
-    for(unsigned int i=0; i<MSERRects.size(); i++){
-        Mat ROI(inputImage, MSERRects[i]);
-        MSERMats.push_back(ROI);
-    }
-}
-
 //get corners of the rectangle surrounding MSER
 void convRleToRect(vector<extrema::RLERegion> &MSER, vector<Rect> &rects, int imwidth, int imheight){
     for(int i=0;i<MSER.size();i++){
