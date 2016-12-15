@@ -93,36 +93,6 @@ bool exists(string path){
     return S_ISDIR(info.st_mode);
 }
 
-Mat getSquareImage( const cv::Mat& img, int target_width = 150 )
-{
-    int width = img.cols,
-    height = img.rows;
-
-    cv::Mat square = cv::Mat::zeros( target_width, target_width, img.type() );
-
-    int max_dim = ( width >= height ) ? width : height;
-    float scale = ( ( float ) target_width ) / max_dim;
-    cv::Rect roi;
-    if ( width >= height )
-    {
-        roi.width = target_width;
-        roi.x = 0;
-        roi.height = height * scale;
-        roi.y = ( target_width - roi.height ) / 2;
-    }
-    else
-    {
-        roi.y = 0;
-        roi.height = target_width;
-        roi.width = width * scale;
-        roi.x = ( target_width - roi.width ) / 2;
-    }
-
-    cv::resize( img, square( roi ), roi.size() );
-
-    return square;
-}
-
 void splitPath(string path, vector<string> &split){
     vector<string> strs;
     boost::split(strs, path, boost::is_any_of("/"));
@@ -214,7 +184,7 @@ Rect getTLWH(string dataFilePath){
     return Rect(tlx, tly, width, height);
 }
 
-bool subimage(Rect tlwh, RotatedRect corn){
+bool isPositive(Rect tlwh, RotatedRect corn){
     // tlwh.x += tlwh.width/4;    //modification to decrease false negatives, positives are easy to filter
     // tlwh.y += tlwh.height/4;
     // tlwh.width = (tlwh.width)/2;
@@ -228,6 +198,12 @@ bool subimage(Rect tlwh, RotatedRect corn){
     if (3*2*tlwh.width < bound.width || 3*2*tlwh.height < bound.height)
         return false;
 
+    return true;
+}
+
+bool subimage(Rect a, RotatedRect b){
+    Rect bound = b.boundingRect();
+    if((a & bound) == a) return true;
     return true;
 }
 
@@ -259,7 +235,7 @@ Mat extractYellowChannel(Mat &inputImage){
 
 Mat processMat(Mat &input){
     Mat output;
-    resize(input, output, Size(300,100));
+    resize(input, output, Size(294,114));
     return output;
 }
 
@@ -372,14 +348,14 @@ void MSERGenerator_t::genMSERImages(string datasetPath, string annotationPath, b
 void filterMSERs(vector<ellipseParameters> &MSERElls, vector<ellipseParameters> &MSEREllsYlw, vector<ellipseParameters> &filteredElls){
     for(ellipseParameters tempEll : MSERElls){
         float ellArea = PI * tempEll.axes.width * tempEll.axes.height;
-        if(ellArea > 200 && (tempEll.angle < 25 || tempEll.angle > 155 ) && tempEll.axes.height > 0 && (float)tempEll.axes.width/(float)tempEll.axes.height > 1.5 && (float)tempEll.axes.width/(float)tempEll.axes.height < 10 ) //Potential Number Plates
+        if(ellArea > 200 && /*(tempEll.angle < 25 || tempEll.angle > 155 ) && tempEll.axes.height > 0 && /*(float)tempEll.axes.width/(float)tempEll.axes.height > 1.5 &&*/ (float)tempEll.axes.width/(float)tempEll.axes.height < 10 ) //Potential Number Plates
         {
             filteredElls.push_back(tempEll);
         }
     }
     for(ellipseParameters tempEll : MSEREllsYlw){
         float ellArea = PI * tempEll.axes.width * tempEll.axes.height;
-        if(ellArea > 200 && (tempEll.angle < 25 || tempEll.angle > 155 ) && tempEll.axes.height > 0 && (float)tempEll.axes.width/(float)tempEll.axes.height > 1.5 && (float)tempEll.axes.width/(float)tempEll.axes.height < 10 ) //Potential Number Plates
+        if(ellArea > 200 && /*(tempEll.angle < 25 || tempEll.angle > 155 ) && tempEll.axes.height > 0 && /*(float)tempEll.axes.width/(float)tempEll.axes.height > 1.5 &&*/ (float)tempEll.axes.width/(float)tempEll.axes.height < 10 ) //Potential Number Plates
         {
             filteredElls.push_back(tempEll);
         }
@@ -387,23 +363,25 @@ void filterMSERs(vector<ellipseParameters> &MSERElls, vector<ellipseParameters> 
 }
 
 void convEllToRect(Mat &inputImage, vector<ellipseParameters> &MSEREllipses, vector<RotatedRect> &MSERRects){
-    Rect rect(Point(), inputImage.size());
-    bool isValid;
-
+    Rect imageRect(Point(), inputImage.size());
+    
     for (ellipseParameters ell : MSEREllipses){
-        isValid = true;
+        // isValid = true;
         RotatedRect MSERRect(ell.center, Size(ell.axes.width*4, ell.axes.height*4), ell.angle); //ell.axes contains half the length of axes
-        Point2f corners[4];
-        MSERRect.points(corners);
-        for(int i=0; i<4; i++){
-            if (! rect.contains(corners[i])){
-                isValid = false;
-                break;
-            }
-        }
-        if(isValid){
+        if (subimage(imageRect, MSERRect)){
             MSERRects.push_back(MSERRect);
         }
+        // Point2f corners[4];
+        // MSERRect.points(corners);
+        // for(int i=0; i<4; i++){
+        //     if (! rect.contains(corners[i])){
+        //         isValid = false;
+        //         break;
+        //     }
+        // }
+        // if(isValid){
+        //     MSERRects.push_back(MSERRect);
+        // }
     }
 }
 
@@ -443,7 +421,7 @@ void MSERGenerator_t::genMSERImages(string datasetPath, vector<string> imageFile
         Rect tlwh = getTLWH(annotationPath + imageFile + ".txt");
         
         for(RotatedRect MSERRect : MSERRects){
-            if(takePos && subimage(tlwh, MSERRect)){
+            if(takePos && isPositive(tlwh, MSERRect)){
                 Mat roi = cropRegion(inputImage, MSERRect);
                 Mat mser = processMat(roi);
                 addPositive(mser, imageName, posDir);
@@ -472,38 +450,28 @@ void MSERGenerator_t::processAnnotation(string dataFilePath, string imageName, s
     if(!dataFile.is_open()){
         return;
     }
-    Rect per;
+    ellipseParameters ell;
     string line;
+    Rect imageRect(Point(), inputImage.size());
     
     while(getline(dataFile, line)){
         istringstream iss(line);
         char label;
-        iss >> per.x >> per.y >> per.width >> per.height >> label;
+        iss >> ell.center.x >> ell.center.y >> ell.axes.width >> ell.axes.height >> ell.angle >> label;
         
-        per.x = max(per.x - per.width/2, 0);
-        per.y = max(per.y - per.height/2, 0);
-        per.width = 2*per.width;
-        per.height = 2*per.height;
-        if(per.x + per.width > inputImage.cols) per.width = inputImage.cols - per.x;
-        if(per.y + per.height > inputImage.rows) per.height = inputImage.rows - per.y;
-
-        if(label=='n'){
-            Mat roi(inputImage, per);
-            Mat mser = processMat(roi);
-            addPositive(mser, imageName, posDir);
-            
-            vector<Mat> augmented;
-            augment(inputImage, per, augmented);
-            for(int a=0; a<augmented.size(); a++){
-                Mat mser2 = processMat(augmented[a]);
-                addPositive(mser2, imageName, posDir);
+        RotatedRect MSERRect(ell.center, Size(ell.axes.width*4, ell.axes.height*4), ell.angle); //ell.axes contains half the length of axes
+        if (subimage(imageRect, MSERRect)){
+            if(label=='n'){
+                Mat roi = cropRegion(inputImage, MSERRect);
+                Mat mser = processMat(roi);
+                addPositive(mser, imageName, posDir);
             }
-        }
-        
-        else if (label=='b') {
-            Mat roi(inputImage, per);
-            Mat mser = processMat(roi);
-            addNegative(mser, imageName, negDir);
+            
+            else if (label=='b') {
+                Mat roi = cropRegion(inputImage, MSERRect);
+                Mat mser = processMat(roi);
+                addNegative(mser, imageName, negDir);
+            }
         }
     }
 
@@ -511,7 +479,7 @@ void MSERGenerator_t::processAnnotation(string dataFilePath, string imageName, s
 }
 
 void MSERGenerator_t::genInsti(string datasetPath){
-    string annotationPath = datasetPath + "annotation/";
+    string annotationPath = datasetPath + "annotation_ellipse/";
     vector<string> allImageFiles = listDirectory(datasetPath, false);
     vector<string> trainImageFiles, valImageFiles;
     splitDataset(allImageFiles, train2valRatio, trainImageFiles, valImageFiles);

@@ -7,14 +7,14 @@ if opt.type == 'cuda' then
 end
 
 local InputMaps = 3
-local InputWidth = 300  --changed
-local InputHeight = 100 --changed
+local InputWidth = 294  --changed
+local InputHeight = 114 --changed
 
 local KernelSize = {7,7,3,3,3,3,1,1,1,1}
 local ConvStride = {2,1,1,1,1,1,1,1,1,1}
 local Padding = {0,0,1,1,1,1,0,0,0,0}
 local PoolSize =   {3,2,1,1,1,3,1,1,1,1}
-local PoolStride= PoolSize
+local PoolStride = PoolSize
 local TValue = 0
 local TReplace = 0
 local Outputs = 2 --changed
@@ -146,7 +146,8 @@ return {
     Weights = w,
     Grads = dE_dw,
     FeatMaps = FeatMaps,
-    SizeMap = SizeMap,
+    SizeMapWidth = SizeMapWidth,
+    SizeMapHeight = SizeMapHeight,
     loss = loss
 }
 

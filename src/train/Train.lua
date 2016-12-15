@@ -156,7 +156,7 @@ setmetatable(dataset.valData,
 );
 
 trainer = nn.StochasticGradient(model.Model, model.loss)
-trainer.learningRate = 0.001
+trainer.learningRate = 0.0001
 trainer.maxIteration = tonumber(arg[1])
 cnnFile = '../../trained_cnns/' .. datasetName .. '_' .. modelName
 logFile = 'outputs/' .. datasetName .. '_' .. modelName .. '_' .. trainer.learningRate .. '.log'
