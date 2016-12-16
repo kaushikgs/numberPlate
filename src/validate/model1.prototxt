@@ -1,9 +1,9 @@
-name: "Model"
+name: "Model1"
 layer {
   name: "data"
   type: "Input"
   top: "data"
-  input_param { shape: { dim: 1000 dim: 3 dim: 150 dim: 150 } }
+  input_param { shape: { dim: 1000 dim: 3 dim: 294 dim: 114 } }
 }
 layer {
   name: "conv1"

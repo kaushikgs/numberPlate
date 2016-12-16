@@ -195,7 +195,7 @@ bool isPositive(Rect tlwh, RotatedRect corn){
 
     //if(7*4*tlwh.width*tlwh.height < cornWidth*cornHeight)
     //    return false;
-    if (3*2*tlwh.width < bound.width || 3*2*tlwh.height < bound.height)
+    if (3*tlwh.width < bound.width || 3*tlwh.height < bound.height)
         return false;
 
     return true;
@@ -203,8 +203,8 @@ bool isPositive(Rect tlwh, RotatedRect corn){
 
 bool subimage(Rect a, RotatedRect b){
     Rect bound = b.boundingRect();
-    if((a & bound) == a) return true;
-    return true;
+    if((a & bound) == bound) return true;
+    return false;
 }
 
 bool intersecting(Rect rect1, RotatedRect rotRect2){
@@ -389,15 +389,25 @@ Mat cropRegion(Mat image, RotatedRect rect){
     Mat M, rotated, cropped;
     float angle = rect.angle;
     Size rect_size = rect.size;
+    Rect bound = rect.boundingRect();
 
-    if(rect.angle < -45.){
-        angle += 90.0;
-        swap(rect_size.width, rect_size.height);
-    }
+    if(bound.x < 0) bound.x = 0;
+    if(bound.y < 0) bound.y = 0;
+    if(bound.x + bound.width -1 > image.cols) bound.width = image.cols - bound.x;
+    if(bound.y + bound.height -1 > image.rows) bound.height = image.rows - bound.y;
 
-    M = getRotationMatrix2D(rect.center, angle, 1.0);
-    warpAffine(image, rotated, M, image.size(), INTER_CUBIC);
-    getRectSubPix(rotated, rect_size, rect.center, cropped);
+    Mat boundMat(image, bound);
+
+    // if(rect.angle < -45.){
+    //     angle += 90.0;
+    //     swap(rect_size.width, rect_size.height);
+    // }
+
+    Point center(rect.center.x - bound.x, rect.center.y - bound.y);
+
+    M = getRotationMatrix2D(center, angle, 1.0);
+    warpAffine(boundMat, rotated, M, boundMat.size(), INTER_CUBIC);
+    getRectSubPix(rotated, rect_size, center, cropped);
     return cropped;
 }
 
