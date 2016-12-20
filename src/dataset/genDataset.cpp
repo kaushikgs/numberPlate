@@ -29,6 +29,127 @@
 using namespace std;
 using namespace cv;
 
+void getCorners(Rect rect, Point corners[]){
+    corners[0] = rect.tl();
+    corners[1] = Point(rect.x + rect.width - 1, rect.y);
+    corners[2] = rect.br();
+    corners[3] = Point(rect.x, rect.y + rect.height - 1);
+    return;
+}
+
+class LineEq{
+public:
+    double m;
+    double c;
+    Point p1, p2;
+
+    LineEq(Point p1, Point p2){
+        m = ((double) (p2.y - p1.y)) / (p2.x - p1.x);
+        c = (-1)*m*p1.x + p1.y;
+        this->p1 = p1;
+        this->p2 = p2;
+    }
+
+    LineEq(){
+        m = -1;
+        c = -1;
+    }
+
+    double substitute(Point p){
+        if(std::isinf(m)){
+            if (p.x > p1.x) return 1;
+            else if (p.x < p1.x) return -1;
+            else return 0;
+        }
+        return p.y - m*p.x - c;
+    }
+};
+
+class MyRect{
+    LineEq l0, l1, l2, l3;
+    Rect bound;
+    bool upright;
+
+    void swap(int type){
+        if(type == 12){
+            LineEq temp = l1;
+            l1 = l2;
+            l2 = temp;
+        }
+        if(type == 32){
+            LineEq temp = l3;
+            l3 = l2;
+            l2 = temp;
+        }
+    }
+
+public:
+    MyRect(RotatedRect rect){
+        Point2f corners[4];
+        rect.points(corners);
+        l0 = LineEq(corners[0],corners[1]);
+        l1 = LineEq(corners[1],corners[2]);
+        l2 = LineEq(corners[2],corners[3]);
+        l3 = LineEq(corners[3],corners[0]);
+        upright = false;
+        
+        if(std::isinf(l0.m) || std::isinf(l1.m) || std::isinf(l2.m) || std::isinf(l3.m)){
+            bound = rect.boundingRect();
+            Point bndCorners[4];
+            getCorners(bound, bndCorners);
+            l0 = LineEq(bndCorners[0],bndCorners[1]);
+            l1 = LineEq(bndCorners[1],bndCorners[2]);
+            l2 = LineEq(bndCorners[2],bndCorners[3]);
+            l3 = LineEq(bndCorners[3],bndCorners[0]);
+            upright = true;
+        }
+
+        else if((l0.m - l2.m) > 1 || (l0.m - l2.m) < -1){
+            if((l0.m - l1.m) < 1 || (l0.m - l1.m) > -1){
+                swap(12);
+            }
+
+            else if((l0.m - l3.m) < 1 || (l0.m - l3.m) > -1){
+                swap(32);
+            }
+
+            else{
+                cerr << "Line order error" << endl;
+            }
+        }
+
+        if(!upright && ((l0.m - l2.m) > 1 || (l0.m - l2.m) < -1)){
+            cerr << "Line order error" << endl;
+        }
+
+    }
+
+    bool contains(Point p){
+        if(upright){
+            return bound.contains(p);
+        }
+
+        if(l0.substitute(p)*l2.substitute(p) <=0 && l1.substitute(p)*l3.substitute(p) <=0){
+            return true;
+        }
+        else{
+            return false;
+        }
+    }
+
+    bool contains(Rect rect){
+        Point corners[4]; getCorners(rect, corners);
+
+        for(Point corner : corners){
+            if(!contains(corner)){
+                return false;
+            }
+        }
+
+        return true;
+    }
+};
+
 class MSERGenerator_t{
     int numPoss=0, numTrNegs=0, numVlNegs=0;
     int maxTrNumNegs, maxVlNumNegs;
@@ -85,6 +206,10 @@ void mkAllDirs(string outputPath){
     usleep(2000000);
     mkdir((valPath + "negative/").c_str(), 0777);
     usleep(2000000);
+    mkdir((trainPath + "ellipses/").c_str(), 0777);
+    usleep(2000000);
+    mkdir((valPath + "ellipses/").c_str(), 0777);
+    usleep(2000000);
 }
 
 bool exists(string path){
@@ -100,28 +225,6 @@ void splitPath(string path, vector<string> &split){
         if(str != "")
             split.push_back(str);
     }
-}
-
-int countFiles(string directory){
-    DIR *dir;
-    struct dirent *ent;
-    dir = opendir(directory.c_str());
-    if(dir == NULL){
-        cout << "Could not open Directory " << directory <<endl;
-        return -1;
-    }
-    int count = 0;
-
-    while((ent = readdir(dir)) != NULL){
-        if(ent->d_type == DT_REG)   //ignore subdirectories, datas will be there
-            count++;
-        string fileName = ent->d_name;
-        if(strcmp(fileName.c_str(), ".") == 0 || strcmp(fileName.c_str(), "..") == 0 ){
-            count--;
-        }
-    }
-
-    return count;
 }
 
 vector<string> listDirectory(string dirPath, bool returnPaths) {
@@ -190,27 +293,45 @@ bool isPositive(Rect tlwh, RotatedRect corn){
     // tlwh.width = (tlwh.width)/2;
     // tlwh.height = (tlwh.height)/2;
 
-    Rect bound = corn.boundingRect();
-    if((tlwh & bound) != tlwh) return false;
+    MyRect myrect(corn);
+    if(!myrect.contains(tlwh)) return false;
 
-    //if(7*4*tlwh.width*tlwh.height < cornWidth*cornHeight)
-    //    return false;
-    if (3*tlwh.width < bound.width || 3*tlwh.height < bound.height)
+    // Rect bound = corn.boundingRect();
+    // if (3*tlwh.width < bound.width || 3*tlwh.height < bound.height)
+
+    if(9*tlwh.area() < corn.size.width*corn.size.height){
         return false;
+    }
 
     return true;
 }
 
-bool subimage(Rect a, RotatedRect b){
+bool subimage(Rect a, RotatedRect b){ //check if b lies in a
     Rect bound = b.boundingRect();
     if((a & bound) == bound) return true;
     return false;
 }
 
 bool intersecting(Rect rect1, RotatedRect rotRect2){
-    Rect rect2 = rotRect2.boundingRect();
-    return (rect1 & rect2).area() > 0;
+    MyRect myrect(rotRect2);
+    Point rect1Corners[4];  getCorners(rect1, rect1Corners);
+    Point2f rect2Corners[4];  rotRect2.points(rect2Corners);
+
+    for(int i=0; i<4; i++){
+        if(myrect.contains(rect1Corners[i])){
+            return true;
+        }
+    }
+
+    for(int i=0; i<4; i++){
+        if(rect1.contains(rect2Corners[i])){
+            return true;
+        }
+    }
+
+    return false;
 }
+    
 
 Mat extractYellowChannel(Mat &inputImage){
 
@@ -237,41 +358,6 @@ Mat processMat(Mat &input){
     Mat output;
     resize(input, output, Size(294,114));
     return output;
-}
-
-void augment(Mat &inputImage, Rect cornerPoints, vector<Mat> &augmented){
-    Point cornTL = cornerPoints.tl();
-    Point cornBR = cornerPoints.br();
-
-    int width = cornBR.x - cornTL.x + 1;
-    int height = cornBR.y - cornTL.y + 1;
-    cornTL.x -= width/2;
-    cornTL.y -= height/2;
-    width = 2*width;
-    height = 2*height;
-    
-    if (cornTL.x < 0 || cornTL.y < 0)
-        return;
-    if (cornTL.x + width >= inputImage.cols || cornTL.y + height >= inputImage.rows)
-        return;
-    
-    Rect R(cornTL.x, cornTL.y, width, height);
-    Mat src(inputImage, R);
-    Mat dst;
-    Point2f pt(src.cols/2, src.rows/2);
-    Mat r = getRotationMatrix2D(pt, 5, 1.0);
-    warpAffine(src, dst, r, Size(src.cols, src.rows));
-    Point tl(src.cols/4, src.rows/4);
-    Point br(3*src.cols/4, 3*src.rows/4);
-    Rect R2(tl, br);
-    Mat aug1(dst, R2);
-    augmented.push_back(aug1);
-    
-    Mat dst2;
-    r = getRotationMatrix2D(pt, -5, 1.0);
-    warpAffine(src, dst2, r, Size(src.cols, src.rows));
-    Mat aug2(dst2, R2);
-    augmented.push_back(aug2);
 }
 
 void MSERGenerator_t::addPositive(Mat mser, string imageName, string posDir){
@@ -362,27 +448,19 @@ void filterMSERs(vector<ellipseParameters> &MSERElls, vector<ellipseParameters> 
     }
 }
 
-void convEllToRect(Mat &inputImage, vector<ellipseParameters> &MSEREllipses, vector<RotatedRect> &MSERRects){
+Mat convEllToRect(Mat &inputImage, vector<ellipseParameters> &MSEREllipses, vector<RotatedRect> &MSERRects, string imageFile){
     Rect imageRect(Point(), inputImage.size());
+    Mat ellImage = inputImage.clone();
     
     for (ellipseParameters ell : MSEREllipses){
-        // isValid = true;
         RotatedRect MSERRect(ell.center, Size(ell.axes.width*4, ell.axes.height*4), ell.angle); //ell.axes contains half the length of axes
         if (subimage(imageRect, MSERRect)){
+            ellipse(ellImage, ell.center, ell.axes, ell.angle, 0, 360, Scalar(rand()%255,rand()%255,rand()%255));
             MSERRects.push_back(MSERRect);
         }
-        // Point2f corners[4];
-        // MSERRect.points(corners);
-        // for(int i=0; i<4; i++){
-        //     if (! rect.contains(corners[i])){
-        //         isValid = false;
-        //         break;
-        //     }
-        // }
-        // if(isValid){
-        //     MSERRects.push_back(MSERRect);
-        // }
     }
+
+    return ellImage;
 }
 
 Mat cropRegion(Mat image, RotatedRect rect){
@@ -390,25 +468,39 @@ Mat cropRegion(Mat image, RotatedRect rect){
     float angle = rect.angle;
     Size rect_size = rect.size;
     Rect bound = rect.boundingRect();
-
-    if(bound.x < 0) bound.x = 0;
-    if(bound.y < 0) bound.y = 0;
-    if(bound.x + bound.width -1 > image.cols) bound.width = image.cols - bound.x;
-    if(bound.y + bound.height -1 > image.rows) bound.height = image.rows - bound.y;
-
     Mat boundMat(image, bound);
-
-    // if(rect.angle < -45.){
-    //     angle += 90.0;
-    //     swap(rect_size.width, rect_size.height);
-    // }
-
+    
     Point center(rect.center.x - bound.x, rect.center.y - bound.y);
-
     M = getRotationMatrix2D(center, angle, 1.0);
     warpAffine(boundMat, rotated, M, boundMat.size(), INTER_CUBIC);
     getRectSubPix(rotated, rect_size, center, cropped);
     return cropped;
+}
+
+void augment(Mat &inputImage, RotatedRect MSERRect, vector<Mat> &augmented){
+    Rect cornerPoints = MSERRect.boundingRect();
+    Point cornTL = cornerPoints.tl();
+    Point cornBR = cornerPoints.br();
+
+    int width = cornBR.x - cornTL.x + 1;
+    int height = cornBR.y - cornTL.y + 1;
+    cornTL.x -= width/2;
+    cornTL.y -= height/2;
+    width = 2*width;
+    height = 2*height;
+    
+    if (cornTL.x < 0 || cornTL.y < 0)
+        return;
+    if (cornTL.x + width >= inputImage.cols || cornTL.y + height >= inputImage.rows)
+        return;
+
+    RotatedRect augRect1 = MSERRect, augRect2 = MSERRect;
+    augRect1.angle += 5;
+    augRect2.angle -= 5;
+    Mat augMat1 = cropRegion(inputImage, augRect1);
+    Mat augMat2 = cropRegion(inputImage, augRect2);
+    augmented.push_back(augMat1);
+    augmented.push_back(augMat2);
 }
 
 void MSERGenerator_t::genMSERImages(string datasetPath, vector<string> imageFiles, string annotationPath, string outputPath, bool takePos, bool takeNeg){
@@ -427,21 +519,22 @@ void MSERGenerator_t::genMSERImages(string datasetPath, vector<string> imageFile
         filterMSERs(MSERElls, MSEREllsYlw, filteredElls);
         
         vector<RotatedRect> MSERRects;
-        convEllToRect(inputImage, filteredElls, MSERRects);
-        Rect tlwh = getTLWH(annotationPath + imageFile + ".txt");
+        Mat ellImage = convEllToRect(inputImage, filteredElls, MSERRects, imageFile);
         
+        int i=0;
+        Rect tlwh = getTLWH(annotationPath + imageFile + ".txt");
         for(RotatedRect MSERRect : MSERRects){
             if(takePos && isPositive(tlwh, MSERRect)){
                 Mat roi = cropRegion(inputImage, MSERRect);
                 Mat mser = processMat(roi);
                 addPositive(mser, imageName, posDir);
                 
-                // vector<Mat> augmented;
-                // augment(inputImage, MSERRect, augmented);
-                // for(int a=0; a<augmented.size(); a++){
-                //     Mat mser2 = processMat(augmented[a]);
-                //     addPositive(mser2, imageName, posDir);
-                // }
+                vector<Mat> augmented;
+                augment(inputImage, MSERRect, augmented);
+                for(int a=0; a<augmented.size(); a++){
+                    Mat mser2 = processMat(augmented[a]);
+                    addPositive(mser2, imageName, posDir);
+                }
             }
             
             else if (takeNeg && !intersecting(tlwh, MSERRect)){
@@ -449,6 +542,9 @@ void MSERGenerator_t::genMSERImages(string datasetPath, vector<string> imageFile
                 Mat mser = processMat(roi);
                 addNegative(mser, imageName, negDir);
             }
+
+            i++;
+            imwrite(outputPath + "ellipses/" + imageFile, ellImage);
         }
     }
 
@@ -470,11 +566,18 @@ void MSERGenerator_t::processAnnotation(string dataFilePath, string imageName, s
         iss >> ell.center.x >> ell.center.y >> ell.axes.width >> ell.axes.height >> ell.angle >> label;
         
         RotatedRect MSERRect(ell.center, Size(ell.axes.width*4, ell.axes.height*4), ell.angle); //ell.axes contains half the length of axes
-        if (subimage(imageRect, MSERRect)){
+        if (subimage(imageRect, MSERRect)){ //eliminate corners
             if(label=='n'){
                 Mat roi = cropRegion(inputImage, MSERRect);
                 Mat mser = processMat(roi);
                 addPositive(mser, imageName, posDir);
+
+                vector<Mat> augmented;
+                augment(inputImage, MSERRect, augmented);
+                for(int a=0; a<augmented.size(); a++){
+                    Mat mser2 = processMat(augmented[a]);
+                    addPositive(mser2, imageName, posDir);
+                }
             }
             
             else if (label=='b') {
@@ -535,7 +638,7 @@ int main(int argc, char **argv){
         string dirName = strs[strs.size()-1];
         datasetName = datasetName + dirName + "_";
     }
-    datasetName = datasetName + "anrr_" + argv[1] + "k_" + argv[2];
+    datasetName = datasetName + "anrr_full_" + argv[1] + "k_" + argv[2];
     string outputPath = projectRoot + "datasets/" + datasetName + "/";
     mkAllDirs(outputPath);
     
