@@ -19,9 +19,8 @@ end
 
 function loadImages(path, posCount, negCount)
     num = 1
-    local images = torch.Tensor(posCount + negCount, 3, imwidth, imheight)
+    local images = torch.Tensor(posCount + negCount, 3, imheight, imwidth)
     local labels = torch.Tensor(posCount + negCount)
-    
     --load from the dataset
     local p = io.popen('ls -p ' .. path .. 'positive/ | grep -v /')  --lists only files
     for file in p:lines() do
@@ -31,7 +30,6 @@ function loadImages(path, posCount, negCount)
     end
     p:close()
     print('Positive images loaded. Total ' .. num-1 .. ' images loaded')
-
     local p = io.popen('ls -p ' .. path .. 'negative/ | grep -v /')
     for file in p:lines() do
         images[num] = image.load(path .. 'negative/' .. file)
@@ -40,37 +38,30 @@ function loadImages(path, posCount, negCount)
     end
     p:close()
     print('Negative images loaded. Total ' .. num-1 .. ' images loaded')
-    
     return images, labels
 end
 
 function loadData(dir)
     --count number of images first
     posCount, negCount = countImages(dir)
-
     --load the images
     images, labels = loadImages(dir, posCount, negCount)
-
     -- shuffle dataset: get shuffled indices in this variable:
     local shuffle = torch.randperm((#labels)[1])
     local numImages = posCount + negCount
-
     -- create dataset:
     data = {
-       data = torch.Tensor(numImages, 3, imwidth, imheight),
+       data = torch.Tensor(numImages, 3, imheight, imwidth),
        labels = torch.Tensor(numImages),
        size = function() return numImages end
     }
-
     for i=1,numImages do
        data.data[i] = images[shuffle[i]]:clone()
        data.labels[i] = labels[shuffle[i]]
     end
-
     -- remove from memory temp image files:
     images = nil
     labels = nil
-  
     data.data = data.data:float()
     return data
 end
@@ -78,13 +69,13 @@ end
 -- classes: GLOBAL var!
 classes = {'numberPlate','background'}
 
-if #arg == 0 then
-    arg={...}
-end
+-- if #arg == 0 then
+--     arg={...}
+-- end
 datName = ''
 
-imwidth = 294
-imheight = 114
+imwidth = 287
+imheight = 95
 
 local datasetDir = arg[1]
 pathParts = split_path(datasetDir)

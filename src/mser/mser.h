@@ -4,5 +4,6 @@
 #include "libExtrema.h" 
 
 void computeMSER(cv::Mat &inputImage, std::vector<ellipseParameters> &MSEREllipses);
+void computeMSER2(cv::Mat &inputImage, std::vector<cv::Rect> &MSEREllipses);
 
 void convRleToRect(std::vector<extrema::RLERegion> &MSER, std::vector<cv::Rect> &rects, int imwidth, int imheight);

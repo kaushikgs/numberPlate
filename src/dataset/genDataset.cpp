@@ -195,7 +195,7 @@ Mat extractYellowChannel(Mat &inputImage){
 
 Mat processMat(Mat &input){
     Mat output;
-    resize(input, output, Size(294,114));
+    resize(input, output, Size(287,95));
     return output;
 }
 
@@ -220,11 +220,30 @@ void filterMSERs(vector<ellipseParameters> &MSERElls, vector<ellipseParameters> 
 Mat cropRegion(Mat image, RotatedRect rect){
     Mat M, rotated, cropped;
     float angle = rect.angle;
+    while(angle > 90){
+        angle = angle-180;
+    }
+    while(angle <-90){
+        angle = angle+180;
+    }
+
+    
     Size rect_size = rect.size;
     Rect bound = rect.boundingRect();
+
+    int pad = 0;
+    if(bound.width > bound.height){
+        pad = bound.width;
+    }
+    else{
+        pad = bound.height;
+    }
+    Size targetSize(3*pad, 3*pad);
+
     Mat boundMat(image, bound);
+    copyMakeBorder( boundMat, boundMat, pad, pad, pad, pad, BORDER_CONSTANT, Scalar(0,0,0) );
     
-    Point center(rect.center.x - bound.x, rect.center.y - bound.y);
+    Point center(rect.center.x - bound.x + pad, rect.center.y - bound.y + pad);
     M = getRotationMatrix2D(center, angle, 1.0);
     warpAffine(boundMat, rotated, M, boundMat.size(), INTER_CUBIC);
     getRectSubPix(rotated, rect_size, center, cropped);

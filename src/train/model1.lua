@@ -7,8 +7,8 @@ if opt.type == 'cuda' then
 end
 
 local InputMaps = 3
-local InputWidth = 294  --changed
-local InputHeight = 114 --changed
+local InputWidth = 300  --changed
+local InputHeight = 100 --changed
 
 local KernelSize = {7,7,3,3,3,3,1,1,1,1}
 local ConvStride = {2,1,1,1,1,1,1,1,1,1}
@@ -96,7 +96,7 @@ model:add(nn.Linear(FeatMaps[LayerNum], FeatMaps[LayerNum+1]))
 ---------------Layer - Log Probabilities--------------------------
 model:add(nn.LogSoftMax())
 
-model = require('weight-init')(model, 'xavier_caffe')
+model = require('weight-init')(model, 'xavier')
 for i,layer in ipairs(model.modules) do
     if layer.bias then
         layer.bias:fill(0)

@@ -37,6 +37,48 @@ void computeMSER(Mat &inputImage, vector<ellipseParameters> &MSEREllipses){
     return;
 }
 
+// void computeMSER2(Mat &inputImage, vector<ellipseParameters> &MSEREllipses){
+void computeMSER2(Mat &inputImage, vector<Rect> &MSERRects){
+    extrema::ExtremaParams p;
+    p.preprocess = 0;
+    p.max_area = 0.01;
+    p.min_size = 30;
+    p.min_margin = 10;
+    p.relative = 0;
+    p.verbose = 0;
+    p.debug = 0;
+    double scale_factor = 1.0;
+    scale_factor = scale_factor * 2; /* compensate covariance matrix */
+
+    //Create an image that can be given as input to MSER code by Matas
+    extrema::ExtremaImage im;
+    im.width = inputImage.cols;
+    im.height = inputImage.rows;
+    im.channels = inputImage.channels();
+    im.data = inputImage.data; //Might need a type case to unsigned char *
+    
+    if (im.channels<3)
+        p.preprocess = extrema::PREPROCESS_CHANNEL_none;
+    else
+        p.preprocess = extrema::PREPROCESS_CHANNEL_intensity;
+    
+    extrema::RLEExtrema result;
+    result = extrema::getRLEExtrema(p, im);
+
+    // vector<ellipseParameters> MSERMinEllipses;
+    // vector<ellipseParameters> MSERPlusEllipses;
+    
+    result.MSERmin.insert(result.MSERmin.end(), result.MSERplus.begin(), result.MSERplus.end());
+    convRleToRect(result.MSERmin, MSERRects, im.width, im.height);
+    // extrema::convRleToEll(result.MSERmin, MSERMinEllipses, scale_factor);
+    // extrema::convRleToEll(result.MSERplus, MSERPlusEllipses, scale_factor);
+
+    // MSEREllipses.insert(MSEREllipses.end(), MSERMinEllipses.begin(), MSERMinEllipses.end());
+    // MSEREllipses.insert(MSEREllipses.end(), MSERPlusEllipses.begin(), MSERPlusEllipses.end());
+
+    return;
+}
+
 //get corners of the rectangle surrounding MSER
 void convRleToRect(vector<extrema::RLERegion> &MSER, vector<Rect> &rects, int imwidth, int imheight){
     for(int i=0;i<MSER.size();i++){

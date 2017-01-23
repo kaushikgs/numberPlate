@@ -261,7 +261,7 @@ void genMSERImages(Mat &inputImage, vector<RotatedRect> &allRects, int minArea, 
             }
         }
     }
-	
+
     imwrite(ellipsePath, drawEllImage);
 }
 
@@ -412,5 +412,5 @@ int main(int argc, char **argv){
         cout << "Total time: " << ((double) writeImg_t - start) /CLOCKS_PER_SEC<< " seconds" << endl << endl;
     }
     
-	return 0;
+    return 0;
 }

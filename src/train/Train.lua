@@ -2,6 +2,24 @@ require 'cunn'
 require '../misc/mylib'
 require 'optim'
 
+function evaluate(data, module)
+    local correct = 0
+    for t = 1,data:size() do
+        local example = data[t]
+        local input = example[1]
+        local target = example[2]
+        module:forward(input)
+        if module.output[1] >= module.output[2] and target == 1 then
+            correct = correct+1
+        else
+            if module.output[1] < module.output[2] and target == 2 then
+                correct = correct+1
+            end
+        end
+    end
+    return correct / data:size()
+end
+
 ------------------------------------ train function definition -----------------------------------
 function nn.StochasticGradient:trainManual(trainData, valData, cnnfile, logFile)
     local iteration = 1
@@ -20,43 +38,10 @@ function nn.StochasticGradient:trainManual(trainData, valData, cnnfile, logFile)
     end
 
     local start_t = os.clock()
+    
     --Calculate before starting training
-    local preTrCorrect = 0
-    for t = 1,trainData:size() do
-        local example = trainData[t]
-        local input = example[1]
-        local target = example[2]
-
-        module:forward(input)
-     
-        if module.output[1] >= module.output[2] and target == 1 then
-            preTrCorrect = preTrCorrect+1
-        else
-            if module.output[1] < module.output[2] and target == 2 then
-                preTrCorrect = preTrCorrect+1
-            end
-        end
-    end
-    local preTrAcc = preTrCorrect / trainData:size()
-
-    local preValCorrect = 0
-    for t = 1,valData:size() do
-        local example = valData[t]
-        local input = example[1]
-        local target = example[2]
-
-        module:forward(input)
-     
-        if module.output[1] >= module.output[2] and target == 1 then
-            preValCorrect = preValCorrect+1
-        else
-            if module.output[1] < module.output[2] and target == 2 then
-                preValCorrect = preValCorrect+1
-            end
-        end
-    end
-    local preValAcc = preValCorrect / valData:size()
-   
+    local preTrAcc = evaluate(trainData, module)
+    local preValAcc = evaluate(valData, module)
     logger:add{0, 0, preTrAcc, preValAcc, os.clock()-start_t}
 
     while true do
@@ -87,31 +72,13 @@ function nn.StochasticGradient:trainManual(trainData, valData, cnnfile, logFile)
 
         currentError = currentError / trainData:size()
         local trAcc = trCorrect / trainData:size()
- 
-        local valCorrect = 0
-        for t = 1,valData:size() do
-            local example = valData[t]
-            local input = example[1]
-            local target = example[2]
-
-            module:forward(input)
-         
-            if module.output[1] >= module.output[2] and target == 1 then
-                valCorrect = valCorrect+1
-            else
-                if module.output[1] < module.output[2] and target == 2 then
-                    valCorrect = valCorrect+1
-                end
-            end
-        end
-        local valAcc = valCorrect / valData:size()
-
-        if iteration%snapFreq == 0 then
-            torch.save(cnnfile  .. '_' .. iteration .. '.cnn', self.module)
-        end
-      
+        local valAcc = evaluate(valData, module)
         logger:add{iteration, currentError, trAcc, valAcc, os.clock()-start_t}
 
+        if iteration%snapFreq == 0 then
+            torch.save(cnnfile  .. '_' .. self.learningRate .. '_' .. iteration .. '.cnn', self.module)
+        end
+      
         if self.hookIteration then
             self.hookIteration(self, iteration, currentError)
         end
@@ -156,11 +123,10 @@ setmetatable(dataset.valData,
 );
 
 trainer = nn.StochasticGradient(model.Model, model.loss)
-trainer.learningRate = 0.0001
+trainer.learningRate = 0.001
 trainer.maxIteration = tonumber(arg[1])
 cnnFile = '../../trained_cnns/' .. datasetName .. '_' .. modelName
 logFile = 'outputs/' .. datasetName .. '_' .. modelName .. '_' .. trainer.learningRate .. '.log'
 
 trainer:trainManual(dataset.trainData, dataset.valData, cnnFile, logFile)
-torch.save(cnnFile  .. '_' .. arg[1] .. '.cnn', model.Model)
-print('Training completed. CNN saved as ' .. cnnFile)
+torch.save(cnnFile  .. '_' .. trainer.learningRate .. '_' .. arg[1] .. '.cnn', model.Model)
